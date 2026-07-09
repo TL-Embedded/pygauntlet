@@ -3,7 +3,7 @@ import re, time, datetime
 
 
 T = TypeVar("T")
-
+COLUMNS = [7, 32, 42, 30] # 120 chars wide once |'s are included.
 
 class Gauntlet():
     
@@ -24,6 +24,7 @@ class Gauntlet():
         self.total_tests = 0
         self.start_time = time.time()
         ts = datetime.datetime.now().strftime("%Y/%m/%d %H:%M:%S.%f")[:-3]
+        self._log_header()
         self._log("Test start", ts)
 
     def stop(self):
@@ -31,50 +32,51 @@ class Gauntlet():
             self.running = False
 
             if self.passed_tests:
-                self._log("PASS", f"{self.passed_tests} / {self.total_tests} tests passed", 'g')
+                self._log("Test passed", f"{self.passed_tests} / {self.total_tests} tests passed", 'g')
             else:
-                self._log("FAIL", f"{self.passed_tests} / {self.total_tests} tests passed", 'r')
+                self._log("Test failed", f"{self.passed_tests} / {self.total_tests} tests passed", 'r')
 
     def test(self, name: str, func: Callable[[],bool]) -> bool:
         predicate = lambda x: x
-        return self._test_internal(name, func, predicate, None, None)
+        return self._test_internal(name, func, predicate, "", None)
 
     def test_within(self, name: str, func: Callable[[], T], min: T = None, max: T = None, unit: str = None) -> bool:
         predicate = lambda x: (min == None or x >= min) and (max == None or x <= max)
-        condition = ("" if min == None else f"{self._format_value(min, unit)} <= ") + "x" + ("" if max == None else f" >= {self._format_value(max, unit)}")
-        return self._test_internal(name, func, predicate, condition, unit)
+        criteria = ("" if min == None else f"{self._format_value(min, unit)} < ") + "x" + ("" if max == None else f" > {self._format_value(max, unit)}")
+        return self._test_internal(name, func, predicate, criteria, unit)
 
     def test_equal(self, name: str, func: Callable[[],T], expected: T, unit: str = None) -> bool:
         predicate = lambda x: x == expected
-        condition = f"x == {self._format_value(expected, unit)}"
-        return self._test_internal(name, func, predicate, condition, unit)
+        criteria = f"x = {self._format_value(expected, unit)}"
+        return self._test_internal(name, func, predicate, criteria, unit)
 
     def test_pattern(self, name: str, func: Callable[[], str], pattern: str) -> bool:
         predicate = lambda x: re.match(pattern, x) != None
-        condition = f"pattern matches \"{pattern}\""
-        return self._test_internal(name, func, predicate, condition, None)
+        criteria = f"pattern matches \"{pattern}\""
+        return self._test_internal(name, func, predicate, criteria, None)
     
     def test_log(self, name: str, func: Callable[[], T], unit: str = None) -> bool:
         predicate = lambda x: True
         return self._test_internal(name, func, predicate, unit)
 
-    def _test_internal(self, name: str, func: Callable[[], T], predicate: Callable[[T],bool], condition: str, unit: str) -> bool:
+    def _test_internal(self, name: str, value: Callable[[], T]|T, predicate: Callable[[T],bool], criteria: str, unit: str) -> bool:
 
         self.total_tests += 1
         if not self.running:
             return False
         
-        self._pre_log(name)
-        try:
-            result = func()
-            passed = predicate(result)
-        except Exception as e:
-            self._log_result(name, "Exception occurred, {e}")
-            return False
-
+        if callable(value):
+            self._log_row(["", name], temporary=True)
+            try:
+                value = value()
+            except Exception as e:
+                self._log_row([self._timestamp(), name, f"Exception occured, {e}", criteria])
+                return False
+        
+        passed = predicate(value)
         if passed:
             self.passed_tests += 1
-        self._log_result(name, self._format_value(result, unit), condition, color=('w' if passed else 'r'))
+        self._log_row([self._timestamp(), name, self._format_value(value, unit), criteria], color=('w' if passed else 'r'))
         return passed
 
     def _format_value(self, value: T, unit: str) -> str:
@@ -87,11 +89,23 @@ class Gauntlet():
         if unit:
             return f"{value} {unit}"
         return value
-    
-    def _pre_log(self, name: str):
-        print(f"[       ] {name}: ...", end="\r", flush=True)
 
-    def _log_result(self, name: str, message: str, condition: str = None, color: str = 'w'):
+    def _log(self, name: str, message: str, color: str = 'w'):
+        self._log_row([self._timestamp(), name, message], color)
+
+    def _timestamp(self) -> str:
+        return f"{time.time() - self.start_time:07.3f}"
+    
+    def _log_header(self):
+        self._log_row(["Time", "Step", "Result", "Criteria"])
+        self._log_row(["-" * (c-1) for c in COLUMNS])
+
+    def _log_row(self, items: list[str], color: str = 'w', temporary: bool = False):
+        line = []
+        for i, width in enumerate(COLUMNS):
+            item = items[i] if i < len(items) else ""
+            line.append(item.ljust(width))
+
         color = {
             "r": "\033[31m",
             "g": "\033[32m",
@@ -101,12 +115,11 @@ class Gauntlet():
             "c": "\033[36m",
             "w": "\033[0m",
         }[color]
-        elapsed = time.time() - self.start_time
 
-        body = f"{name}: {message}" if message != None else name
-        if condition:
-            body = f"{body} ({condition})"
-        print(f"\033[K{color}[{elapsed:07.3f}] {body}\33[0m")
+        line = color + "| " + "| ".join(line) + "|" + "\33[0m"
 
-    def _log(self, name: str, message: str = None, color: str = 'w'):
-        self._log_result(name, message, color=color)
+        if temporary:
+            print(line, end="\r", flush=True)
+        else:
+            print(line)
+
