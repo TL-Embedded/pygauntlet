@@ -1,15 +1,21 @@
-from typing import Callable, TypeVar
-import re, time, datetime
+from typing import Callable
+import time, datetime
+
+from .criteria import *
+from .util import T, format_value, console_color, free_filename
 
 
-T = TypeVar("T")
-COLUMNS = [7, 32, 42, 30] # 120 chars wide once |'s are included.
+COLUMNS = [8, 28, 28, 6, 28, 8]
+HEADERS = ["Time", "Step", "Result", "Unit", "Criteria", "Status"]
+
 
 class Gauntlet():
     
-    def __init__(self, name: str = ""):
+    def __init__(self, name: str = "", path: str = None):
         self.name = name
         self.running = False
+        self.result_path = path
+        self.file = None
 
     def __enter__(self):
         self.start()
@@ -24,102 +30,97 @@ class Gauntlet():
         self.total_tests = 0
         self.start_time = time.time()
         ts = datetime.datetime.now().strftime("%Y/%m/%d %H:%M:%S.%f")[:-3]
+
+        if self.result_path != None:
+            self.result_path = free_filename(self.result_path, ".md")
+            self.file = open(self.result_path, 'w')
+
         self._log_header()
-        self._log("Test start", ts)
+        self._log(name="Test start", result=ts)
 
     def stop(self):
         if self.running:
             self.running = False
 
-            if self.passed_tests:
-                self._log("Test passed", f"{self.passed_tests} / {self.total_tests} tests passed", 'g')
+            if self.passed_tests == self.total_tests:
+                self._log(name="Test passed", result=f"{self.passed_tests} / {self.total_tests} tests passed", status="PASS", color='g')
             else:
-                self._log("Test failed", f"{self.passed_tests} / {self.total_tests} tests passed", 'r')
+                self._log(name="Test failed", result=f"{self.passed_tests} / {self.total_tests} tests passed", status="FAIL", color='r')
 
-    def test(self, name: str, func: Callable[[],bool]) -> bool:
-        predicate = lambda x: x
-        return self._test_internal(name, func, predicate, "", None)
+            if self.file:
+                self.file.close()
 
-    def test_within(self, name: str, func: Callable[[], T], min: T = None, max: T = None, unit: str = None) -> bool:
-        predicate = lambda x: (min == None or x >= min) and (max == None or x <= max)
-        criteria = ("" if min == None else f"{self._format_value(min, unit)} < ") + "x" + ("" if max == None else f" > {self._format_value(max, unit)}")
-        return self._test_internal(name, func, predicate, criteria, unit)
+    def test(self, name: str, func: Callable[[], T]|T, unit: str = None, equal: T = None, minimum: T = None, maximum: T = None, pattern: str = None):
+        
+        checks = []
+        if equal != None:
+            checks.append(EqualsCriteria(equal))
+        if minimum != None or maximum != None:
+            checks.append(RangeCriteria(minimum, maximum))
+        if pattern != None:
+            checks.append(PatternCriteria(pattern))
 
-    def test_equal(self, name: str, func: Callable[[],T], expected: T, unit: str = None) -> bool:
-        predicate = lambda x: x == expected
-        criteria = f"x = {self._format_value(expected, unit)}"
-        return self._test_internal(name, func, predicate, criteria, unit)
+        if len(checks) == 0:
+            criteria = NotFalseCriteria()
+        elif len(checks) == 1:
+            criteria = checks[0]
+        else:
+            criteria = GroupCriteria(checks)
 
-    def test_pattern(self, name: str, func: Callable[[], str], pattern: str) -> bool:
-        predicate = lambda x: re.match(pattern, x) != None
-        criteria = f"pattern matches \"{pattern}\""
-        return self._test_internal(name, func, predicate, criteria, None)
-    
-    def test_log(self, name: str, func: Callable[[], T], unit: str = None) -> bool:
-        predicate = lambda x: True
-        return self._test_internal(name, func, predicate, unit)
+        return self.test_custom(name, func, unit, criteria)
 
-    def _test_internal(self, name: str, value: Callable[[], T]|T, predicate: Callable[[T],bool], criteria: str, unit: str) -> bool:
-
+    def test_custom(self, name: str, func: Callable[[], T]|T, unit: str, criteria: Criteria) -> bool:
+        
         self.total_tests += 1
         if not self.running:
             return False
         
-        if callable(value):
-            self._log_row(["", name], temporary=True)
+        if callable(func):
+            self._log(name=name, unit=unit, temporary=True)
             try:
-                value = value()
+                result = func()
+                passed = criteria.predicate(result)
             except Exception as e:
-                self._log_row([self._timestamp(), name, f"Exception occured, {e}", criteria])
+                self._log(name=name, result=f"Exception occured, {e}", unit=unit, criteria=criteria.describe(), color='r')
                 return False
+        else:
+            result = func
         
-        passed = predicate(value)
+        passed = criteria.predicate(result)
+
         if passed:
             self.passed_tests += 1
-        self._log_row([self._timestamp(), name, self._format_value(value, unit), criteria], color=('w' if passed else 'r'))
+
+        self._log(name=name, result=format_value(result), unit=unit, criteria=criteria.describe(),
+            status=("PASS" if passed else "FAIL"),
+            color=('w' if passed else 'r')
+            )
         return passed
-
-    def _format_value(self, value: T, unit: str) -> str:
-        if type(value) is str:
-            value = f'"{value}"'
-        elif type(value) is bool:
-            value = "OK" if value else "ERROR"
-        else:
-            value = str(value)
-        if unit:
-            return f"{value} {unit}"
-        return value
-
-    def _log(self, name: str, message: str, color: str = 'w'):
-        self._log_row([self._timestamp(), name, message], color)
+    
+    def _log(self, name: str, result: str = None, unit: str = None, criteria: str = None, status: str = None, color: str = 'w', temporary: bool = False):
+        self._log_row([self._timestamp(), name, result, unit, criteria, status], color=color, temporary=temporary)
 
     def _timestamp(self) -> str:
         return f"{time.time() - self.start_time:07.3f}"
     
     def _log_header(self):
-        self._log_row(["Time", "Step", "Result", "Criteria"])
+        self._log_row(HEADERS)
         self._log_row(["-" * (c-1) for c in COLUMNS])
 
     def _log_row(self, items: list[str], color: str = 'w', temporary: bool = False):
         line = []
         for i, width in enumerate(COLUMNS):
-            item = items[i] if i < len(items) else ""
+            item = (items[i] or "") if i < len(items) else ""
             line.append(item.ljust(width))
 
-        color = {
-            "r": "\033[31m",
-            "g": "\033[32m",
-            "y": "\033[33m",
-            "b": "\033[34m",
-            "m": "\033[35m",
-            "c": "\033[36m",
-            "w": "\033[0m",
-        }[color]
+        text = "| " + "| ".join(line) + "|"
 
-        line = color + "| " + "| ".join(line) + "|" + "\33[0m"
+        line = console_color(color) + text + console_color('w')
 
         if temporary:
             print(line, end="\r", flush=True)
         else:
             print(line)
+            if self.file:
+                self.file.write(text + "\n")
 
