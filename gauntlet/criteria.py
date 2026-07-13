@@ -10,7 +10,15 @@ def format_value(value) -> str:
 
 
 class Criteria():
-    def predicate(self, value: T) -> bool:
+    def evaluate(self, value: T) -> bool:
+        raise NotImplementedError()
+    
+    def describe(self) -> str:
+        raise NotImplementedError()
+
+
+class NullCriteria(Criteria):
+    def evaluate(self, value: T) -> bool:
         return True
     
     def describe(self) -> str:
@@ -21,7 +29,7 @@ class EqualsCriteria(Criteria):
     def __init__(self, equals: T):
         self.equals = equals
     
-    def predicate(self, value: T) -> bool:
+    def evaluate(self, value: T) -> bool:
         return self.equals == value
     
     def describe(self) -> str:
@@ -29,7 +37,7 @@ class EqualsCriteria(Criteria):
 
 
 class NotFalseCriteria(Criteria):
-    def predicate(self, value: T) -> bool:
+    def evaluate(self, value: T) -> bool:
         return value != False
     
     def describe(self):
@@ -41,7 +49,7 @@ class RangeCriteria(Criteria):
         self.minimum = minimum
         self.maximum = maximum
 
-    def predicate(self, value: T):
+    def evaluate(self, value: T):
         return (self.minimum == None or value >= self.minimum) and (self.maximum == None or value <= self.maximum)
     
     def describe(self) -> str:
@@ -56,7 +64,7 @@ class PatternCriteria(Criteria):
     def __init__(self, pattern: str):
         self.pattern = pattern
 
-    def predicate(self, value: T):
+    def evaluate(self, value: T):
         return re.match(value, self.pattern) != None
     
     def describe(self) -> str:
@@ -67,9 +75,12 @@ class GroupCriteria(Criteria):
     def __init__(self, criteria: list[Criteria]):
         self.criteria = criteria
 
-    def predicate(self, value: T):
-        return all(c.predicate(value) for c in self.criteria)
+    def append(self, criteria: Criteria):
+        self.criteria.append(criteria)
+
+    def evaluate(self, value: T):
+        return all(c.evaluate(value) for c in self.criteria)
     
     def describe(self):
-        return " and ".join(c.description for c in self.criteria)
+        return " & ".join(c.describe() for c in self.criteria)
     
