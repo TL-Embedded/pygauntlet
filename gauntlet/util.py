@@ -22,7 +22,6 @@ def console_color(text: str, code: str) -> str:
         "rb": "\033[41m",
         "gb": "\033[42m",
         "yb": "\033[43m",
-        "fb": "\033[2m",
         "r": "\033[31m",
         "g": "\033[32m",
         "y": "\033[33m",

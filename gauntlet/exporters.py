@@ -51,6 +51,8 @@ class ConsoleExporter(Exporter):
         }.get(items[MD_COL_STATUS], None)
 
         full_row = code == 'f' or final
+        if final and code and code != 'f':
+            code += 'b'
 
         for i, width in enumerate(MD_COLUMNS):
             items[i] = items[i].ljust(width)
@@ -60,7 +62,7 @@ class ConsoleExporter(Exporter):
 
         text = "| " + "| ".join(items) + "|"
         if code and full_row:
-            text = console_color(text, code + 'b' if code != 'f' else code)
+            text = console_color(text, code)
 
         if temporary:
             print(text, end="\r", flush=True)
