@@ -2,20 +2,18 @@ from typing import Callable
 import time, datetime
 
 from .criteria import *
-from .util import T, format_value, console_color, free_filename
-
-
-COLUMNS = [8, 28, 28, 6, 28, 8]
-HEADERS = ["Time", "Step", "Result", "Unit", "Criteria", "Status"]
+from .exporters import *
+from .util import T, format_value
 
 
 class Gauntlet():
     
-    def __init__(self, name: str = "", path: str = None):
+    def __init__(self, name: str):
         self.name = name
         self.running = False
-        self.result_path = path
-        self.file = None
+        self.exporters: list[Exporter] = [
+            ConsoleExporter()
+        ]
 
     def __enter__(self):
         self.start()
@@ -31,85 +29,48 @@ class Gauntlet():
         self.start_time = time.time()
         ts = datetime.datetime.now().strftime("%Y/%m/%d %H:%M:%S.%f")[:-3]
 
-        if self.result_path != None:
-            self.result_path = free_filename(self.result_path, ".md")
-            self.file = open(self.result_path, 'w')
+        for exporter in self.exporters:
+            exporter.open()
 
-        self._log_row(HEADERS)
-        self._log_row(["-" * (c-1) for c in COLUMNS])
-        self._log(name="Test start", result=ts)
+        r = Result("Test started", self.elapsed())
+        r.result = ts
+        self._log(r)
 
     def stop(self):
         self.running = False
 
-        if self.passed_tests == self.total_tests:
-            self._log(name="Test passed", result=f"{self.passed_tests} / {self.total_tests} tests passed", status="PASS", final=True)
-        else:
-            self._log(name="Test failed", result=f"{self.passed_tests} / {self.total_tests} tests passed", status="FAIL", final=True)
+        r = Result("Test finished", self.elapsed())
+        r.result = f"{self.passed_tests} / {self.total_tests} steps passed"
+        r.status = "PASS" if self.passed_tests == self.total_tests else "FAIL"
+        self._log(r, final=True)
 
-        if self.file:
-            self.file.close()
+        for exporter in self.exporters:
+            exporter.close()
 
     def step(self, name: str,) -> 'Gauntlet.Step':
         return Gauntlet.Step(self, name)
     
-    def _log(self, name: str, result: str = None, unit: str = None, criteria: str = None, status: str = None, final: bool = False, temporary: bool = False):
-        if status == "RUN":
-            color = 'y'
-        elif status == "FAIL":
-            color = 'r'
-        elif status == "PASS":
-            color = 'g'
-        else:
-            color = 'w'
-        self._log_row([self._timestamp(), name, result, unit, criteria, status], color=color, final=final, temporary=temporary)
+    def elapsed(self) -> float:
+        return time.time() - self.start_time
+    
+    def to_file(self, name: str = None, directory: str = "./results") -> 'Gauntlet':
+        if name == None:
+            name = self.name
+        self.exporters.append(FileExporter(name, directory))
+        return self
+    
+    def _log(self, result: Result, temporary: bool = False, final: bool = False):
+        for exporter in self.exporters:
+            exporter.write(result, temporary, final)
 
-    def _timestamp(self) -> str:
-        return f"{time.time() - self.start_time:07.3f}"
-
-    def _log_row(self, items: list[str], color: str = 'w', final: bool = False, temporary: bool = False):
-        line = []
-        for i, width in enumerate(COLUMNS):
-            item = (items[i] or "") if i < len(items) else ""
-            line.append(item.ljust(width))
-
-        if self.file and not temporary:
-            file_text = "| " + "| ".join(line) + "|" + "\n"
-            self.file.write(file_text)
-        
-        if final:
-            console_text = console_color("| " + "| ".join(line) + "|", color + 'b')
-        else:
-            line[5] = console_color(line[5], color)
-            console_text = "| " + "| ".join(line) + "|"
-
-        if temporary:
-            print(console_text, end="\r", flush=True)
-        else:
-            print(console_text)
-                
-
-    def _log_test_start(self, test: 'Gauntlet.Step'):
-        self._log(
-            name=test.name,
-            status=test.status,
-            temporary=True
-        )
-
-    def _log_test(self, test: 'Gauntlet.Step'):
-        self.total_tests += 1
-        if test.status == "PASS":
-            self.passed_tests += 1
-        else:
-            self.running = False
-        
-        self._log(
-            name=test.name,
-            result=format_value(test.result),
-            unit=test.unit,
-            criteria=test.criteria.describe(),
-            status=test.status,
-        )
+    def _log_step(self, result: Result, temporary: bool = False):
+        if not temporary:
+            self.total_tests += 1
+            if result.status == "PASS":
+                self.passed_tests += 1
+            else:
+                self.running = False
+        self._log(result, temporary)
 
     class Step():
         def __init__(self, host: 'Gauntlet', name: str):
@@ -121,32 +82,37 @@ class Gauntlet():
             self.function = None
             self.criteria: Criteria = NullCriteria()
 
-        def skip(self):
-            self.status = "SKIP"
-            self.gauntlet._log_test(self)
-
-        def run(self) -> T:
-            if not self.gauntlet.running:
-                self.skip()
+        def run(self, skip = False) -> T:
+            if skip or not self.gauntlet.running:
+                self.status = "SKIP"
+                self._log_result()
                 return None
             
             if self.function:
-                self.gauntlet._log_test_start(self)
+                self._log_result(temporary=True)
 
                 try:
                     self.result = self.function()
                 except Exception as e:
                     self.status = "FAIL"
                     self.result = e
-                    self.gauntlet._log_test(self)
+                    self._log_result()
                     return None
             
             passing = self.criteria.evaluate(self.result)
             self.status = "PASS" if passing else "FAIL"
 
-            self.gauntlet._log_test(self)
+            self._log_result()
             return self.result
         
+        def _log_result(self, temporary: bool = False):
+            r = Result(self.name, self.gauntlet.elapsed())
+            r.result = format_value(self.result)
+            r.unit = self.unit
+            r.criteria = self.criteria.describe()
+            r.status = self.status
+            self.gauntlet._log_step(r, temporary)
+            
         def set(self, value: T, unit: str = None) -> 'Gauntlet.Step':
             self.result = value
             self.unit = unit
