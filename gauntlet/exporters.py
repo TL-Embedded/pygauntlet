@@ -1,7 +1,8 @@
 from .util import console_color
-import os
+import os, shutil
 
-MD_COLUMNS = [8, 28, 28, 6, 28, 8]
+MD_COLUMNS = [8, 28, 30, 6, 28, 7]
+MD_COLUMNS_TOTAL = sum(MD_COLUMNS) + (len(MD_COLUMNS) * 2) + 1
 MD_HEADERS = ["Time", "Step", "Result", "Unit", "Criteria", "Status"]
 MD_COL_STATUS = MD_HEADERS.index("Status")
 
@@ -42,6 +43,9 @@ class ConsoleExporter(Exporter):
         ], temporary, final)
         
     def _write_row(self, items: list, temporary: bool = False, final: bool = False):
+
+        if temporary and shutil.get_terminal_size().columns < 120:
+            return
 
         code = {
             "PASS": 'g',

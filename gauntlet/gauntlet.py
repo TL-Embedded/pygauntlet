@@ -118,10 +118,14 @@ class Gauntlet():
             self.unit = unit
             return self
         
-        def method(self, function: Callable[[], T], unit: str = None) -> 'Gauntlet.Step':
+        def measure(self, function: Callable[[], T], unit: str = None) -> 'Gauntlet.Step':
             self.function = function
             self.unit = unit
             return self
+        
+        def operation(self, function: Callable[[], None]) -> 'Gauntlet.Step':
+            self.function = lambda: function() or True
+            return self.equals(True)
         
         def equals(self, value: T) -> 'Gauntlet.Step':
             return self.add_criteria( EqualsCriteria(value) )

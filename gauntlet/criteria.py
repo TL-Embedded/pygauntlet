@@ -65,7 +65,7 @@ class PatternCriteria(Criteria):
         self.pattern = pattern
 
     def evaluate(self, value: T):
-        return re.match(value, self.pattern) != None
+        return re.match(self.pattern, value) != None
     
     def describe(self) -> str:
         return f"x matches \"{self.pattern}\""

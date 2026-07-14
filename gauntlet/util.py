@@ -10,7 +10,9 @@ def format_value(value) -> str:
     elif type(value) is bool:
         return "OK" if value else "ERROR"
     elif isinstance(value, Exception):
-        return f"Exception: {value}"
+        if type(value) is StepError:
+            return value.text
+        return type(value).__name__
     return str(value)
 
 
@@ -31,3 +33,7 @@ def console_color(text: str, code: str) -> str:
         "f": "\033[2m",
     }[code] + text + "\033[0m"
 
+
+class StepError(Exception):
+    def __init__(self, text: str):
+        self.text = text
